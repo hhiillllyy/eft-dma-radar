@@ -38,7 +38,8 @@ namespace eft_dma_radar.Common.Misc.Data
             ["Arena_AutoService"] = "Chop Shop",
             ["Arena_Yard"] = "Yard",
             ["Arena_Prison"] = "Fort",
-            ["Arena_Iceberg"] = "Iceberg"
+            ["Arena_Iceberg"] = "Iceberg",
+            ["Icebreaker"] = "Icebreaker",
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         public static FrozenDictionary<string, FrozenDictionary<string, Vector3>> Doors { get; } = new Dictionary<string, FrozenDictionary<string, Vector3>>(StringComparer.OrdinalIgnoreCase)
         {
