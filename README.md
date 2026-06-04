@@ -17,7 +17,6 @@
 ## Special Thanks
 - Lone Survivor
   - Open sourcing his `lone-dma` project & allowing us to extend its functionality significantly, none of this was possible without him
-   - [cant confirm if your crypto addresses are correct so i don't wanna add them]
 - Anyone who i have contacted like ""ye"" , ""Ant"" and many more
 
 ## Contact
