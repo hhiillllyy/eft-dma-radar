@@ -1822,18 +1822,18 @@ function drawSvgLayerAnchored(filename, map, cx, cy, zoom, rotateRad, anchorMap,
   const w = dims.w * svgScale * zoom;
   const h = dims.h * svgScale * zoom;
 
-  drawCtx.save();
-  drawCtx.globalAlpha = alpha;
+  ctx.save();
+  ctx.globalAlpha = alpha;
 
-  drawCtx.translate(cx, cy);
-  if(state.rotateWithLocal) drawCtx.rotate(-rotateRad);
+  ctx.translate(cx, cy);
+  if(state.rotateWithLocal) ctx.rotate(-rotateRad);
 
   const ax = (anchorMap?.x ?? 0) * zoom;
   const ay = (anchorMap?.y ?? 0) * zoom;
-  drawCtx.translate(-ax, -ay);
+  ctx.translate(-ax, -ay);
 
-  drawCtx.drawImage(img, 0, 0, w, h);
-  drawCtx.restore();
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.restore();
   return true;
 }
 
@@ -2140,46 +2140,35 @@ function drawAimview(players){
 
   console.log("drawAimview()");
 
-  if (!state.showAimview) return;
+    if (!state.showAimview) return;
 
-  const canvas = popupCanvas || aimviewCanvas;
-  const ctx = popupCtx || aimviewCtx;
-  console.log(
-    "CTX CHECK",
-    ctx === popupCtx,
-    ctx === aimviewCtx
-);
+    const canvas = popupCanvas || aimviewCanvas;
+    const ctx = popupCtx || aimviewCtx;
 
-  if (!canvas || !ctx) return;
+    if (!canvas || !ctx) return;
 
-  if (!popupCanvas) {
-    if (
-      aimviewWidget &&
-      (aimviewWidget.classList.contains("hidden") ||
-       aimviewWidget.classList.contains("minimized"))
-    )
-      return;
-  }
+    if (!popupCanvas) {
+        if (
+            aimviewWidget &&
+            (aimviewWidget.classList.contains("hidden") ||
+             aimviewWidget.classList.contains("minimized"))
+        )
+            return;
+    }
 
-  const W = canvas.width;
-  const H = canvas.height;
-  const halfW = W / 2;
-  const halfH = H / 2;
+    const W = canvas.width;
+    const H = canvas.height;
+    const halfW = W / 2;
+    const halfH = H / 2;
 
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "rgba(0,0,0,0.88)";
   ctx.fillRect(0, 0, W, H);
 
   const centered = lastCenteredPlayer;
-  console.log(
-    "Players:",
-    players.length,
-    "Centered:",
-    centered?.Name || centered?.name
-);
-
+  console.log("Centered =", centered);
   if(!centered) {
-    drawAimviewCrosshair(ctx, halfW, halfH);
+    drawAimviewCrosshair(halfW, halfH);
     return;
   }
 
@@ -2189,39 +2178,32 @@ function drawAimview(players){
   const cpx = Number(centered.worldX ?? centered.WorldX ?? 0);
   const cpy = Number(centered.worldY ?? centered.WorldY ?? 0);
   const cpz = Number(centered.worldZ ?? centered.WorldZ ?? 0);
-
+  // Yaw from WebRadarPlayer comes as MapRotation (yaw-90), raw Rotation.X is what we need.
+  // Rotation.X is serialized as the Yaw field (degrees, 0-360 already corrected for map).
+  // We need raw EFT yaw = MapRotation + 90.
   const centeredYaw   = (Number(centered.yaw ?? centered.Yaw ?? 0) + 90);
   const centeredPitch = Number(centered.pitch ?? centered.Pitch ?? 0);
-
-  const synthVm = buildAimviewMatrix(
-    cpx,
-    cpy,
-    cpz,
-    centeredYaw,
-    centeredPitch
-  );
+  const synthVm = buildAimviewMatrix(cpx, cpy, cpz, centeredYaw, centeredPitch);
 
   const cx = cpx, cy = cpy, cz = cpz;
 
+  // Compute focal length from configured FOV, then apply player zoom if enabled
   const fovRad = (state.aimviewFov || 90) * Math.PI / 180;
   let focalLen = halfW / Math.tan(fovRad / 2);
-
   if(state.aimviewZoomWithPlayer && !centeredIsLocal){
     const zl = Number(centered.zoomLevel ?? centered.ZoomLevel ?? 1) || 1;
-    if(zl > 1) focalLen *= zl;
+    if(zl > 1) focalLen *= zl;  // zoom synthetic projection via focal length
   }
 
   const maxDist = Number(state.aimviewMaxDist) || 0;
 
   for(const p of players){
-
     console.log(
       "Player:",
       p?.Name || p?.name,
       "Alive:",
       p?.IsAlive ?? p?.isAlive
     );
-
     if(!p || p === centered) continue;
     if(p?.isAlive === false || p?.IsAlive === false) continue;
     if(isExtracted(p)) continue;
@@ -2230,91 +2212,50 @@ function drawAimview(players){
     const tx = Number(p.worldX ?? p.WorldX ?? NaN);
     const ty = Number(p.worldY ?? p.WorldY ?? NaN);
     const tz = Number(p.worldZ ?? p.WorldZ ?? NaN);
+    if(!Number.isFinite(tx) || !Number.isFinite(ty) || !Number.isFinite(tz)) continue;
 
-    if(!Number.isFinite(tx) || !Number.isFinite(ty) || !Number.isFinite(tz))
-      continue;
-
-    const fullDist = Math.sqrt(
-      (tx-cx)**2 +
-      (ty-cy)**2 +
-      (tz-cz)**2
-    );
-
-    if(maxDist > 0 && fullDist > maxDist)
-      continue;
+    const fullDist = Math.sqrt((tx-cx)**2 + (ty-cy)**2 + (tz-cz)**2);
+    if(maxDist > 0 && fullDist > maxDist) continue;
 
     const col = playerColor(p);
 
     if(centeredIsLocal){
-
+      // Local player: use pre-projected SkeletonScreen (exact game camera, no recomputation needed)
       const skel = p?.skeletonScreen ?? p?.SkeletonScreen;
-
-      console.log({
-      name: p?.Name || p?.name,
-      skeletonExists: !!skel,
-      length: skel?.length,
-      first: skel?.slice(0,8)
-      });
-
-      if(!Array.isArray(skel) || skel.length !== 52)
-        continue;
-      console.log("Drawing", p?.Name || p?.name);
-      drawAimviewSkel52(ctx, skel, W, H, col, fullDist, p);
-
-    } else {
-
-      const world = p?.skeletonWorld ?? p?.SkeletonWorld;
-
-      if(!Array.isArray(world) || world.length !== 48)
-        continue;
-
-      const anchorPt = w2sSynth(
-        world[9],
-        world[10],
-        world[11],
-        synthVm,
-        halfW,
-        halfH,
-        focalLen
+      console.log(
+        "DRAWING",
+        p?.Name || p?.name,
+        skel,
+        skel?.length
       );
+      if(!Array.isArray(skel) || skel.length !== 52) continue;
+      drawAimviewSkel52(skel, W, H, col, fullDist, p);
+    } else {
+      // Non-local centered: project SkeletonWorld through synthetic view matrix
+      const world = p?.skeletonWorld ?? p?.SkeletonWorld;
+      if(!Array.isArray(world) || world.length !== 48) continue;
 
-      if(!anchorPt)
-        continue;
+      // Project all 16 bones; anchor = MidTorso (index 3)
+      const anchorPt = w2sSynth(world[9], world[10], world[11], synthVm, halfW, halfH, focalLen);
+      if(!anchorPt) continue; // MidTorso behind camera — skip
 
       const pts = [];
-
       for(let i = 0; i < 16; i++){
-        const bx = world[i*3];
-        const by = world[i*3+1];
-        const bz = world[i*3+2];
-
-        pts.push(
-          w2sSynth(
-            bx,
-            by,
-            bz,
-            synthVm,
-            halfW,
-            halfH,
-            focalLen
-          ) ?? anchorPt
-        );
+        const bx = world[i*3], by = world[i*3+1], bz = world[i*3+2];
+        pts.push(w2sSynth(bx, by, bz, synthVm, halfW, halfH, focalLen) ?? anchorPt);
       }
 
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-
       for(const [a, b] of SKEL_SEGS_W){
         ctx.moveTo(pts[a].px, pts[a].py);
         ctx.lineTo(pts[b].px, pts[b].py);
       }
-
       ctx.stroke();
 
       if(state.showNames){
         const nm = String(p?.name ?? p?.Name ?? "");
-
         if(nm){
           ctx.fillStyle = col;
           ctx.font = "10px monospace";
@@ -2326,7 +2267,6 @@ function drawAimview(players){
 
       const fx = (pts[14].px + pts[15].px) / 2;
       const fy = Math.max(pts[14].py, pts[15].py);
-
       ctx.fillStyle = "rgba(229,231,235,0.85)";
       ctx.font = "10px monospace";
       ctx.textAlign = "center";
@@ -2335,64 +2275,54 @@ function drawAimview(players){
     }
   }
 
-  drawAimviewCrosshair(ctx, halfW, halfH);
+  drawAimviewCrosshair(halfW, halfH);
 }
 
-function drawAimviewSkel52(drawCtx, skel, W, H, col, fullDist, p, zoom=1){
+function drawAimviewSkel52(skel, W, H, col, fullDist, p, zoom=1){
   const halfW = W / 2, halfH = H / 2;
   // sx/sy: apply zoom around canvas center for skeleton screen coords (0-1 normalized)
   const sx = (v) => halfW + (v * W - halfW) * zoom;
   const sy = (v) => halfH + (v * H - halfH) * zoom;
 
-  drawCtx.strokeStyle = col;
-  drawCtx.lineWidth = 1.5;
-  drawCtx.beginPath();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
   for(let i = 0; i < 52; i += 4){
-    drawCtx.moveTo(sx(skel[i]),   sy(skel[i+1]));
-    drawCtx.lineTo(sx(skel[i+2]), sy(skel[i+3]));
+    ctx.moveTo(sx(skel[i]),   sy(skel[i+1]));
+    ctx.lineTo(sx(skel[i+2]), sy(skel[i+3]));
   }
-  drawCtx.stroke();
+  ctx.stroke();
 
   if(state.showNames){
     const nm = String(p?.name ?? p?.Name ?? "");
     if(nm){
-      drawCtx.fillStyle = col;
-      drawCtx.font = "10px monospace";
-      drawCtx.textAlign = "center";
-      drawCtx.textBaseline = "bottom";
-      drawCtx.fillText(nm, sx(skel[0]), sy(skel[1]) - 3);
+      ctx.fillStyle = col;
+      ctx.font = "10px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(nm, sx(skel[0]), sy(skel[1]) - 3);
     }
   }
 
   const fx = (sx(skel[26]) + sx(skel[30])) / 2;
   const fy = Math.max(sy(skel[27]), sy(skel[31]));
-  drawCtx.fillStyle = "rgba(229,231,235,0.85)";
-  drawCtx.font = "10px monospace";
-  drawCtx.textAlign = "center";
-  drawCtx.textBaseline = "top";
-  drawCtx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
+  ctx.fillStyle = "rgba(229,231,235,0.85)";
+  ctx.font = "10px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
 }
 
-function drawAimviewCrosshair(drawCtx, halfW, halfH){
-    const ch = 14, gap = 4;
-
-    drawCtx.strokeStyle = "rgba(255,255,255,0.55)";
-    drawCtx.lineWidth = 1;
-    drawCtx.beginPath();
-
-    drawCtx.moveTo(halfW - ch, halfH);
-    drawCtx.lineTo(halfW - gap, halfH);
-
-    drawCtx.moveTo(halfW + gap, halfH);
-    drawCtx.lineTo(halfW + ch, halfH);
-
-    drawCtx.moveTo(halfW, halfH - ch);
-    drawCtx.lineTo(halfW, halfH - gap);
-
-    drawCtx.moveTo(halfW, halfH + gap);
-    drawCtx.lineTo(halfW, halfH + ch);
-
-    drawCtx.stroke();
+function drawAimviewCrosshair(halfW, halfH){
+  const ch = 14, gap = 4;
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(halfW - ch, halfH); ctx.lineTo(halfW - gap, halfH);
+  ctx.moveTo(halfW + gap, halfH); ctx.lineTo(halfW + ch, halfH);
+  ctx.moveTo(halfW, halfH - ch); ctx.lineTo(halfW, halfH - gap);
+  ctx.moveTo(halfW, halfH + gap); ctx.lineTo(halfW, halfH + ch);
+  ctx.stroke();
 }
 
 function tryWorldXZ(e){
@@ -2618,47 +2548,47 @@ function drawPing(mapRect, cx, cy, rotRad){
   const r = 12 + t * 26;
   const a = 0.95 * (1 - t);
 
-  drawCtx.save();
-  drawCtx.globalAlpha = a;
-  drawCtx.strokeStyle = ping.color;
-  drawCtx.lineWidth = 3;
-  drawCtx.beginPath();
-  drawCtx.arc(s.px, s.py, r, 0, Math.PI*2);
-  drawCtx.stroke();
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = ping.color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(s.px, s.py, r, 0, Math.PI*2);
+  ctx.stroke();
 
-  drawCtx.globalAlpha = a * 0.6;
-  drawCtx.lineWidth = 1.5;
-  drawCtx.beginPath();
-  drawCtx.arc(s.px, s.py, r * 0.6, 0, Math.PI*2);
-  drawCtx.stroke();
+  ctx.globalAlpha = a * 0.6;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(s.px, s.py, r * 0.6, 0, Math.PI*2);
+  ctx.stroke();
 
   if(ping.label){
-    drawCtx.globalAlpha = 1;
-    drawCtx.font = "12px system-ui";
-    drawCtx.fillStyle = "#e5e7eb";
-    drawCtx.textAlign = "center";
-    drawCtx.textBaseline = "bottom";
-    drawCtx.shadowColor = "rgba(0,0,0,.75)";
-    drawCtx.shadowBlur = 8;
-    drawCtx.fillText(ping.label, s.px, s.py - (r + 6));
+    ctx.globalAlpha = 1;
+    ctx.font = "12px system-ui";
+    ctx.fillStyle = "#e5e7eb";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.shadowColor = "rgba(0,0,0,.75)";
+    ctx.shadowBlur = 8;
+    ctx.fillText(ping.label, s.px, s.py - (r + 6));
   }
-  drawCtx.restore();
+  ctx.restore();
 }
 
 /* =========================
    DRAW
 ========================= */
 function drawHeightArrow(px, py, above){
-  drawCtx.font = "12px system-ui";
-  drawCtx.textAlign = "center";
-  drawCtx.textBaseline = "middle";
-  drawCtx.fillText(above ? "^" : "v", px, py);
+  ctx.font = "12px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(above ? "^" : "v", px, py);
 }
 function drawName(px, py, name){
-  drawCtx.font = "12px system-ui";
-  drawCtx.textAlign = "center";
-  drawCtx.textBaseline = "top";
-  drawCtx.fillText(name, px, py + 10);
+  ctx.font = "12px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText(name, px, py + 10);
 }
 
 function drawGroupConnectors(players, map, cx, cy, rotRad, mapRect){
@@ -2675,10 +2605,10 @@ function drawGroupConnectors(players, map, cx, cy, rotRad, mapRect){
   }
   if(groups.size === 0) return;
 
-  drawCtx.save();
-  drawCtx.globalAlpha = state.groupAlpha;
-  drawCtx.strokeStyle = "#9ca3af";
-  drawCtx.lineWidth = 1;
+  ctx.save();
+  ctx.globalAlpha = state.groupAlpha;
+  ctx.strokeStyle = "#9ca3af";
+  ctx.lineWidth = 1;
 
   for(const g of groups.values()){
     if(g.length < 2) continue;
@@ -2689,33 +2619,33 @@ function drawGroupConnectors(players, map, cx, cy, rotRad, mapRect){
     });
 
     for(let i=0;i<positions.length-1;i++){
-      drawCtx.beginPath();
-      drawCtx.moveTo(positions[i].px, positions[i].py);
-      drawCtx.lineTo(positions[i+1].px, positions[i+1].py);
-      drawCtx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(positions[i].px, positions[i].py);
+      ctx.lineTo(positions[i+1].px, positions[i+1].py);
+      ctx.stroke();
     }
   }
-  drawCtx.restore();
+  ctx.restore();
 }
 
 function drawPlayerMarker(px, py, r, color, ang, isDead){
-  drawCtx.save();
-  drawCtx.strokeStyle = color;
-  drawCtx.fillStyle = color;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
 
   const lw = Math.max(2, r * 0.45);
-  drawCtx.lineWidth = lw;
-  drawCtx.lineCap = "round";
+  ctx.lineWidth = lw;
+  ctx.lineCap = "round";
 
   if(isDead){
     const d = r * 1.00;
-    drawCtx.beginPath();
-    drawCtx.moveTo(px - d, py - d);
-    drawCtx.lineTo(px + d, py + d);
-    drawCtx.moveTo(px + d, py - d);
-    drawCtx.lineTo(px - d, py + d);
-    drawCtx.stroke();
-    drawCtx.restore();
+    ctx.beginPath();
+    ctx.moveTo(px - d, py - d);
+    ctx.lineTo(px + d, py + d);
+    ctx.moveTo(px + d, py - d);
+    ctx.lineTo(px - d, py + d);
+    ctx.stroke();
+    ctx.restore();
     return;
   }
 
@@ -2723,11 +2653,11 @@ function drawPlayerMarker(px, py, r, color, ang, isDead){
   const start = ang + gap * 0.5;
   const end   = ang + (Math.PI * 2) - gap * 0.5;
 
-  drawCtx.beginPath();
-  drawCtx.arc(px, py, r, start, end, false);
-  drawCtx.stroke();
+  ctx.beginPath();
+  ctx.arc(px, py, r, start, end, false);
+  ctx.stroke();
 
-  drawCtx.restore();
+  ctx.restore();
 }
 
 function drawPlayers(players, map, cx, cy, rotRad, mapRect, localWorldY, hits){
@@ -2761,15 +2691,15 @@ function drawPlayers(players, map, cx, cy, rotRad, mapRect, localWorldY, hits){
 
     if(state.showAim && !isDead){
       const len = 20;
-      drawCtx.save();
-      drawCtx.strokeStyle = col;
-      drawCtx.lineWidth = 2;
-      drawCtx.lineCap = "round";
-      drawCtx.beginPath();
-      drawCtx.moveTo(px + Math.cos(ang) * (size * 0.15), py + Math.sin(ang) * (size * 0.15));
-      drawCtx.lineTo(px + Math.cos(ang) * len,           py + Math.sin(ang) * len);
-      drawCtx.stroke();
-      drawCtx.restore();
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(px + Math.cos(ang) * (size * 0.15), py + Math.sin(ang) * (size * 0.15));
+      ctx.lineTo(px + Math.cos(ang) * len,           py + Math.sin(ang) * len);
+      ctx.stroke();
+      ctx.restore();
     }
 
     if(state.showHeight && haveHeights){
@@ -2782,7 +2712,7 @@ function drawPlayers(players, map, cx, cy, rotRad, mapRect, localWorldY, hits){
     }
 
     if(state.showNames){
-      drawCtx.fillStyle = "#e5e7eb";
+      ctx.fillStyle = "#e5e7eb";
       const nm = p?.name ?? p?.Name ?? "";
       drawName(px, py, nm);
     }
@@ -2811,12 +2741,12 @@ function drawLoot(loot, map, cx, cy, rotRad, mapRect, hits){
 
   const doLabel = !!state.showLootName || !!state.showLootPrice;
   if(doLabel){
-    drawCtx.save();
-    drawCtx.font = "11px system-ui";
-    drawCtx.textAlign = "left";
-    drawCtx.textBaseline = "middle";
-    drawCtx.shadowColor = "rgba(0,0,0,.85)";
-    drawCtx.shadowBlur = 6;
+    ctx.save();
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,.85)";
+    ctx.shadowBlur = 6;
   }
 
   for(const l of loot){
@@ -2841,19 +2771,19 @@ function drawLoot(loot, map, cx, cy, rotRad, mapRect, hits){
     hits.push({ kind:"loot", px, py, r: Math.max(10, size * 3), data: l });
 
     const col = gi?.color || lootDefaultColor(price);
-    drawCtx.fillStyle = col;
-    drawCtx.fillRect(px - size/2, py - size/2, size, size);
+    ctx.fillStyle = col;
+    ctx.fillRect(px - size/2, py - size/2, size, size);
 
     if(doLabel){
       const label = buildLootLabel(l);
       if(label){
-        drawCtx.fillStyle = "#e5e7eb";
-        drawCtx.fillText(label, px + size + 4, py);
+        ctx.fillStyle = "#e5e7eb";
+        ctx.fillText(label, px + size + 4, py);
       }
     }
   }
 
-  if(doLabel) drawCtx.restore();
+  if(doLabel) ctx.restore();
 }
 
 function drawPois(map, cx, cy, rotRad, mapRect, hits){
@@ -2869,13 +2799,13 @@ function drawPois(map, cx, cy, rotRad, mapRect, hits){
       const col = state.extractColor || "#34d399";
       const alpha = ex.isAvailableForPlayer ? 1.0 : 0.45;
 
-      drawCtx.save();
-      drawCtx.globalAlpha = alpha;
-      drawCtx.fillStyle = col;
-      drawCtx.beginPath();
-      drawCtx.arc(px, py, 5, 0, Math.PI * 2);
-      drawCtx.fill();
-      drawCtx.restore();
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(px, py, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
 
       hits.push({
         kind: "poi",
@@ -2889,9 +2819,9 @@ function drawPois(map, cx, cy, rotRad, mapRect, hits){
       });
 
       if(state.showPoiNames){
-        drawCtx.fillStyle = "#e5e7eb";
-        drawCtx.font = "11px system-ui";
-        drawCtx.fillText(ex.name, px + 8, py);
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "11px system-ui";
+        ctx.fillText(ex.name, px + 8, py);
       }
     }
   }
@@ -2907,16 +2837,16 @@ function drawPois(map, cx, cy, rotRad, mapRect, hits){
       const s = mapXYToScreen(tr.x, tr.y, mapRect, cx, cy, rotRad);
       const px = s.px, py = s.py;
 
-      drawCtx.save();
-      drawCtx.fillStyle = col;
-      drawCtx.beginPath();
-      drawCtx.moveTo(px, py - 6);
-      drawCtx.lineTo(px + 6, py);
-      drawCtx.lineTo(px, py + 6);
-      drawCtx.lineTo(px - 6, py);
-      drawCtx.closePath();
-      drawCtx.fill();
-      drawCtx.restore();
+      ctx.save();
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(px, py - 6);
+      ctx.lineTo(px + 6, py);
+      ctx.lineTo(px, py + 6);
+      ctx.lineTo(px - 6, py);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
 
       hits.push({
         kind: "poi",
@@ -2930,9 +2860,9 @@ function drawPois(map, cx, cy, rotRad, mapRect, hits){
       });
 
       if(state.showPoiNames){
-        drawCtx.fillStyle = "#e5e7eb";
-        drawCtx.font = "11px system-ui";
-        drawCtx.fillText(tr.name || "Transit", px + 10, py);
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "11px system-ui";
+        ctx.fillText(tr.name || "Transit", px + 10, py);
       }
     }
   }
@@ -3315,7 +3245,7 @@ function pickMapId(){
 function frame(){
   requestAnimationFrame(frame);
 
-  drawCtx.clearRect(0, 0, cw, ch);
+  ctx.clearRect(0, 0, cw, ch);
   hitList = [];
 
   const map = radarData?.map || null;
