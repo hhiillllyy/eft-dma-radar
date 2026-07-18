@@ -29,7 +29,10 @@ const playersWidgetSub = document.getElementById("playersWidgetSub");
 const aimviewWidget    = document.getElementById("aimviewWidget");
 const aimviewWidgetMinBtn = document.getElementById("aimviewWidgetMinBtn");
 const aimviewCanvas    = document.getElementById("aimviewCanvas");
-const aimviewCtx       = aimviewCanvas ? aimviewCanvas.getContext("2d") : null;
+const aimviewCtx = aimviewCanvas ? aimviewCanvas.getContext("2d") : null;
+let aimviewPopup = null;
+let popupCanvas = null;
+let popupCtx = null;
 
 const lootFilterModal = document.getElementById("lootFilterModal");
 const lootFilterCard  = lootFilterModal.querySelector(".card");
@@ -573,7 +576,24 @@ function bindAllInputs(){
   onBool("showHeight", inputs.showHeight);
   onNum("playerSize", inputs.playerSize, (v)=>Math.max(1, Number(v)));
   onBool("showPlayersWidget", inputs.showPlayersWidget, applyWidgetsFromState);
-  if(inputs.showAimview) onBool("showAimview", inputs.showAimview, applyWidgetsFromState);
+  if (inputs.showAimview)
+{
+    onBool("showAimview", inputs.showAimview, () => {
+
+        applyWidgetsFromState();
+
+        if (state.showAimview)
+        {
+            openAimviewPopup();
+        }
+        else
+        {
+            if (aimviewPopup && !aimviewPopup.closed)
+                aimviewPopup.close();
+        }
+
+    });
+}
   if(inputs.aimviewFov) inputs.aimviewFov.oninput = () => {
     state.aimviewFov = Math.max(20, Math.min(160, Number(inputs.aimviewFov.value) || 90));
     if(inputs.aimviewFovText) inputs.aimviewFovText.textContent = state.aimviewFov + "\u00b0";
@@ -2067,19 +2087,86 @@ function aimviewPlayerPassesTypeFilter(p){
   }
 }
 
+function openAimviewPopup() {
+
+    console.log("openAimviewPopup() called");
+
+    if (aimviewPopup && !aimviewPopup.closed) {
+        aimviewPopup.focus();
+        return;
+    }
+
+    aimviewPopup = window.open(
+        "",
+        "AimView",
+        "width=650,height=650,resizable=yes"
+    );
+
+    console.log(aimviewPopup);
+
+    if (!aimviewPopup) return;
+
+    aimviewPopup.document.title = "AimView";
+    aimviewPopup.document.body.style.margin = "0";
+    aimviewPopup.document.body.style.background = "#000";
+
+    popupCanvas = aimviewPopup.document.createElement("canvas");
+    popupCanvas.width = 650;
+    popupCanvas.height = 650;
+    popupCanvas.style.width = "100vw";
+    popupCanvas.style.height = "100vh";
+    popupCanvas.style.display = "block";
+
+    popupCtx = popupCanvas.getContext("2d");
+    popupCanvas.width = 650;
+    popupCanvas.height = 650;
+
+    popupCtx.fillStyle = "red";
+    popupCtx.fillRect(0, 0, 650, 650);
+
+    aimviewPopup.document.body.appendChild(popupCanvas);
+
+    aimviewPopup.addEventListener("beforeunload", () => {
+
+        popupCanvas = null;
+        popupCtx = null;
+        aimviewPopup = null;
+
+    });
+
+}
+
 function drawAimview(players){
-  if(!state.showAimview || !aimviewCtx || !aimviewCanvas) return;
-  if(aimviewWidget && (aimviewWidget.classList.contains("hidden") || aimviewWidget.classList.contains("minimized"))) return;
 
-  const W = aimviewCanvas.width;
-  const H = aimviewCanvas.height;
-  const halfW = W / 2, halfH = H / 2;
+  console.log("drawAimview()");
 
-  aimviewCtx.clearRect(0, 0, W, H);
-  aimviewCtx.fillStyle = "rgba(0,0,0,0.88)";
-  aimviewCtx.fillRect(0, 0, W, H);
+    if (!state.showAimview) return;
+
+    const canvas = popupCanvas || aimviewCanvas;
+    const ctx = popupCtx || aimviewCtx;
+
+    if (!canvas || !ctx) return;
+
+    if (!popupCanvas) {
+        if (
+            aimviewWidget &&
+            (aimviewWidget.classList.contains("hidden") ||
+             aimviewWidget.classList.contains("minimized"))
+        )
+            return;
+    }
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const halfW = W / 2;
+    const halfH = H / 2;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(0,0,0,0.88)";
+  ctx.fillRect(0, 0, W, H);
 
   const centered = lastCenteredPlayer;
+  console.log("Centered =", centered);
   if(!centered) {
     drawAimviewCrosshair(halfW, halfH);
     return;
@@ -2111,6 +2198,12 @@ function drawAimview(players){
   const maxDist = Number(state.aimviewMaxDist) || 0;
 
   for(const p of players){
+    console.log(
+      "Player:",
+      p?.Name || p?.name,
+      "Alive:",
+      p?.IsAlive ?? p?.isAlive
+    );
     if(!p || p === centered) continue;
     if(p?.isAlive === false || p?.IsAlive === false) continue;
     if(isExtracted(p)) continue;
@@ -2129,6 +2222,12 @@ function drawAimview(players){
     if(centeredIsLocal){
       // Local player: use pre-projected SkeletonScreen (exact game camera, no recomputation needed)
       const skel = p?.skeletonScreen ?? p?.SkeletonScreen;
+      console.log(
+        "DRAWING",
+        p?.Name || p?.name,
+        skel,
+        skel?.length
+      );
       if(!Array.isArray(skel) || skel.length !== 52) continue;
       drawAimviewSkel52(skel, W, H, col, fullDist, p);
     } else {
@@ -2146,33 +2245,33 @@ function drawAimview(players){
         pts.push(w2sSynth(bx, by, bz, synthVm, halfW, halfH, focalLen) ?? anchorPt);
       }
 
-      aimviewCtx.strokeStyle = col;
-      aimviewCtx.lineWidth = 1.5;
-      aimviewCtx.beginPath();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
       for(const [a, b] of SKEL_SEGS_W){
-        aimviewCtx.moveTo(pts[a].px, pts[a].py);
-        aimviewCtx.lineTo(pts[b].px, pts[b].py);
+        ctx.moveTo(pts[a].px, pts[a].py);
+        ctx.lineTo(pts[b].px, pts[b].py);
       }
-      aimviewCtx.stroke();
+      ctx.stroke();
 
       if(state.showNames){
         const nm = String(p?.name ?? p?.Name ?? "");
         if(nm){
-          aimviewCtx.fillStyle = col;
-          aimviewCtx.font = "10px monospace";
-          aimviewCtx.textAlign = "center";
-          aimviewCtx.textBaseline = "bottom";
-          aimviewCtx.fillText(nm, pts[0].px, pts[0].py - 3);
+          ctx.fillStyle = col;
+          ctx.font = "10px monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillText(nm, pts[0].px, pts[0].py - 3);
         }
       }
 
       const fx = (pts[14].px + pts[15].px) / 2;
       const fy = Math.max(pts[14].py, pts[15].py);
-      aimviewCtx.fillStyle = "rgba(229,231,235,0.85)";
-      aimviewCtx.font = "10px monospace";
-      aimviewCtx.textAlign = "center";
-      aimviewCtx.textBaseline = "top";
-      aimviewCtx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
+      ctx.fillStyle = "rgba(229,231,235,0.85)";
+      ctx.font = "10px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
     }
   }
 
@@ -2185,45 +2284,45 @@ function drawAimviewSkel52(skel, W, H, col, fullDist, p, zoom=1){
   const sx = (v) => halfW + (v * W - halfW) * zoom;
   const sy = (v) => halfH + (v * H - halfH) * zoom;
 
-  aimviewCtx.strokeStyle = col;
-  aimviewCtx.lineWidth = 1.5;
-  aimviewCtx.beginPath();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
   for(let i = 0; i < 52; i += 4){
-    aimviewCtx.moveTo(sx(skel[i]),   sy(skel[i+1]));
-    aimviewCtx.lineTo(sx(skel[i+2]), sy(skel[i+3]));
+    ctx.moveTo(sx(skel[i]),   sy(skel[i+1]));
+    ctx.lineTo(sx(skel[i+2]), sy(skel[i+3]));
   }
-  aimviewCtx.stroke();
+  ctx.stroke();
 
   if(state.showNames){
     const nm = String(p?.name ?? p?.Name ?? "");
     if(nm){
-      aimviewCtx.fillStyle = col;
-      aimviewCtx.font = "10px monospace";
-      aimviewCtx.textAlign = "center";
-      aimviewCtx.textBaseline = "bottom";
-      aimviewCtx.fillText(nm, sx(skel[0]), sy(skel[1]) - 3);
+      ctx.fillStyle = col;
+      ctx.font = "10px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(nm, sx(skel[0]), sy(skel[1]) - 3);
     }
   }
 
   const fx = (sx(skel[26]) + sx(skel[30])) / 2;
   const fy = Math.max(sy(skel[27]), sy(skel[31]));
-  aimviewCtx.fillStyle = "rgba(229,231,235,0.85)";
-  aimviewCtx.font = "10px monospace";
-  aimviewCtx.textAlign = "center";
-  aimviewCtx.textBaseline = "top";
-  aimviewCtx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
+  ctx.fillStyle = "rgba(229,231,235,0.85)";
+  ctx.font = "10px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText(fullDist.toFixed(0) + "m", fx, fy + 2);
 }
 
 function drawAimviewCrosshair(halfW, halfH){
   const ch = 14, gap = 4;
-  aimviewCtx.strokeStyle = "rgba(255,255,255,0.55)";
-  aimviewCtx.lineWidth = 1;
-  aimviewCtx.beginPath();
-  aimviewCtx.moveTo(halfW - ch, halfH); aimviewCtx.lineTo(halfW - gap, halfH);
-  aimviewCtx.moveTo(halfW + gap, halfH); aimviewCtx.lineTo(halfW + ch, halfH);
-  aimviewCtx.moveTo(halfW, halfH - ch); aimviewCtx.lineTo(halfW, halfH - gap);
-  aimviewCtx.moveTo(halfW, halfH + gap); aimviewCtx.lineTo(halfW, halfH + ch);
-  aimviewCtx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(halfW - ch, halfH); ctx.lineTo(halfW - gap, halfH);
+  ctx.moveTo(halfW + gap, halfH); ctx.lineTo(halfW + ch, halfH);
+  ctx.moveTo(halfW, halfH - ch); ctx.lineTo(halfW, halfH - gap);
+  ctx.moveTo(halfW, halfH + gap); ctx.lineTo(halfW, halfH + ch);
+  ctx.stroke();
 }
 
 function tryWorldXZ(e){
@@ -3221,7 +3320,9 @@ function frame(){
 
   drawPing(mapRect, cx, cy, lastRotRad);
 
+  console.log("About to call drawAimview");
   drawAimview(players);
+  console.log("Returned from drawAimview");
 
   // tooltip
   updateHover();
